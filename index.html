@@ -61,7 +61,7 @@
     font-size: 14px; line-height: 1.55;
   }
   a { color: var(--ma); }
-  .wrap { max-width: 1320px; margin: 0 auto; padding: 0 20px 64px; }
+  .wrap { max-width: none; margin: 0 auto; padding: 0 20px 64px; }
 
   /* ── 헤더 ── */
   .topbar {
@@ -117,13 +117,13 @@
 
   /* ── 테이블 ── */
   .tablebox { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; min-width: 1180px; }
+  table { width: 100%; border-collapse: collapse; min-width: 880px; }
   thead th {
     position: sticky; top: 0; z-index: 1;
     background: var(--brand); color: var(--brand-ink);
-    font-size: 12px; font-weight: 700; padding: 11px 12px; text-align: left; white-space: nowrap;
+    font-size: 12px; font-weight: 700; padding: 11px 10px; text-align: left; white-space: nowrap;
   }
-  tbody td { padding: 13px 12px; border-top: 1px solid var(--line); vertical-align: top; }
+  tbody td { padding: 12px 10px; border-top: 1px solid var(--line); vertical-align: top; }
   tbody tr:hover { background: var(--hover); }
 
   td.date { white-space: nowrap; color: var(--sub); font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -135,7 +135,7 @@
   .badge.invest  { background: var(--invest-bg);  color: var(--invest); }
   .badge.partner { background: var(--partner-bg); color: var(--partner); }
 
-  td.title { min-width: 340px; max-width: 480px; }
+  td.title { width: 27%; min-width: 210px; }
   td.title .ko { font-weight: 700; }
   td.title .en { color: var(--sub); font-size: 12px; margin-top: 3px; }
 
@@ -148,7 +148,7 @@
   td.domain span {
     background: var(--chip-bg); border-radius: 6px; padding: 2px 8px; font-size: 12px; color: var(--sub);
   }
-  td.summary { min-width: 240px; max-width: 340px; }
+  td.summary { width: 23%; min-width: 180px; }
   td.linkcol { white-space: nowrap; }
   .srcbtn {
     display: inline-block; padding: 5px 11px; border: 1px solid var(--line);
