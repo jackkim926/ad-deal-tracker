@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>광고업계 딜 트래커</title>
+<style>
+  /* ── 테마 토큰 ─────────────────────────────────────────── */
+  :root {
+    --bg: #f3f4f7;
+    --card: #ffffff;
+    --ink: #191d2b;
+    --sub: #6a7183;
+    --line: #e2e5ec;
+    --hover: #f7f8fc;
+    --brand: #23308f;
+    --brand-ink: #ffffff;
+    --ma: #2a5bd7;      --ma-bg: #e9effc;
+    --invest: #188a56;  --invest-bg: #e3f4ec;
+    --partner: #b3620f; --partner-bg: #fbf0df;
+    --chip-bg: #eef0f5;
+    --banner-bg: #fff8e6; --banner-ink: #7a5b12; --banner-line: #f0dfae;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111420;
+      --card: #191e2e;
+      --ink: #e6e9f4;
+      --sub: #8b93a8;
+      --line: #2a3044;
+      --hover: #1f2537;
+      --brand: #1c2870;
+      --brand-ink: #dfe3ff;
+      --ma: #8fa5f5;      --ma-bg: #232c4d;
+      --invest: #5cc795;  --invest-bg: #17372a;
+      --partner: #e5a25c; --partner-bg: #3d2c17;
+      --chip-bg: #232a3d;
+      --banner-bg: #2e2914; --banner-ink: #e5cf87; --banner-line: #4a4222;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111420;
+    --card: #191e2e;
+    --ink: #e6e9f4;
+    --sub: #8b93a8;
+    --line: #2a3044;
+    --hover: #1f2537;
+    --brand: #1c2870;
+    --brand-ink: #dfe3ff;
+    --ma: #8fa5f5;      --ma-bg: #232c4d;
+    --invest: #5cc795;  --invest-bg: #17372a;
+    --partner: #e5a25c; --partner-bg: #3d2c17;
+    --chip-bg: #232a3d;
+    --banner-bg: #2e2914; --banner-ink: #e5cf87; --banner-line: #4a4222;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px; line-height: 1.55;
+  }
+  a { color: var(--ma); }
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 0 20px 64px; }
+
+  /* ── 헤더 ── */
+  .topbar {
+    background: var(--brand); color: var(--brand-ink);
+    padding: 18px 0;
+  }
+  .topbar .wrap { padding-bottom: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
+  .topbar h1 { font-size: 21px; font-weight: 800; letter-spacing: -0.02em; }
+  .topbar .tagline { font-size: 12.5px; opacity: 0.75; }
+  .topbar .updated { margin-left: auto; font-size: 12px; opacity: 0.75; font-variant-numeric: tabular-nums; }
+
+  .banner {
+    margin-top: 18px; padding: 10px 16px; border-radius: 9px;
+    background: var(--banner-bg); color: var(--banner-ink);
+    border: 1px solid var(--banner-line); font-size: 13px;
+  }
+
+  /* ── 통계 타일 ── */
+  .stats { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 20px; }
+  .stat {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 11px 18px; min-width: 112px; cursor: default;
+  }
+  .stat .num { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .stat .lbl { font-size: 12px; color: var(--sub); }
+  .stat.ma .num { color: var(--ma); }
+  .stat.invest .num { color: var(--invest); }
+  .stat.partner .num { color: var(--partner); }
+
+  /* ── 컨트롤 ── */
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+  .search {
+    flex: 1; min-width: 220px; max-width: 400px;
+    padding: 9px 14px; border: 1px solid var(--line); border-radius: 8px;
+    font-size: 14px; background: var(--card); color: var(--ink); outline: none;
+  }
+  .search:focus { border-color: var(--ma); }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    padding: 7px 15px; border: 1px solid var(--line); border-radius: 999px;
+    background: var(--card); color: var(--sub); font-size: 13px; cursor: pointer;
+    font-weight: 600; font-family: inherit;
+  }
+  .chip:focus-visible, .search:focus-visible, .region:focus-visible {
+    outline: 2px solid var(--ma); outline-offset: 1px;
+  }
+  .chip.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+  select.region {
+    padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--card); color: var(--ink); font-size: 13px; font-family: inherit;
+  }
+  .count { color: var(--sub); font-size: 12.5px; margin-left: auto; font-variant-numeric: tabular-nums; }
+
+  /* ── 테이블 ── */
+  .tablebox { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; min-width: 1180px; }
+  thead th {
+    position: sticky; top: 0; z-index: 1;
+    background: var(--brand); color: var(--brand-ink);
+    font-size: 12px; font-weight: 700; padding: 11px 12px; text-align: left; white-space: nowrap;
+  }
+  tbody td { padding: 13px 12px; border-top: 1px solid var(--line); vertical-align: top; }
+  tbody tr:hover { background: var(--hover); }
+
+  td.date { white-space: nowrap; color: var(--sub); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 700; white-space: nowrap;
+  }
+  .badge.ma      { background: var(--ma-bg);      color: var(--ma); }
+  .badge.invest  { background: var(--invest-bg);  color: var(--invest); }
+  .badge.partner { background: var(--partner-bg); color: var(--partner); }
+
+  td.title { max-width: 340px; }
+  td.title .ko { font-weight: 700; }
+  td.title .en { color: var(--sub); font-size: 12px; margin-top: 3px; }
+
+  td.deal { white-space: nowrap; }
+  td.deal .acq { font-weight: 700; }
+  td.deal .arrow { color: var(--sub); margin: 0 5px; }
+  td.price { white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; }
+  td.price.undisclosed { color: var(--sub); font-weight: 400; }
+  td.region, td.domain { white-space: nowrap; }
+  td.domain span {
+    background: var(--chip-bg); border-radius: 6px; padding: 2px 8px; font-size: 12px; color: var(--sub);
+  }
+  td.summary { max-width: 360px; }
+  td.linkcol { white-space: nowrap; }
+  .srcbtn {
+    display: inline-block; padding: 5px 11px; border: 1px solid var(--line);
+    border-radius: 7px; font-size: 12px; font-weight: 600;
+    color: var(--ma); text-decoration: none; background: var(--card);
+  }
+  .srcbtn:hover { border-color: var(--ma); background: var(--ma-bg); }
+
+  .state { padding: 64px 20px; text-align: center; color: var(--sub); }
+  .spinner {
+    width: 28px; height: 28px; margin: 0 auto 12px;
+    border: 3px solid var(--line); border-top-color: var(--ma);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+  footer { margin-top: 18px; color: var(--sub); font-size: 12px; }
+  footer code { background: var(--chip-bg); padding: 1px 6px; border-radius: 5px; }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 0 12px 40px; }
+    .topbar h1 { font-size: 17px; }
+    .topbar .updated { margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <h1>광고업계 딜 트래커</h1>
+    <span class="tagline">글로벌 M&amp;A · 지분투자 · 파트너십</span>
+    <span class="updated" id="updated"></span>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="banner" id="banner" style="display:none"></div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="controls">
+    <input class="search" id="search" type="search" placeholder="기업명·키워드 검색 (예: Dentsu, AdTech)">
+    <div class="chips" id="typeChips">
+      <button class="chip on" data-type="">전체</button>
+      <button class="chip" data-type="M&A">M&amp;A</button>
+      <button class="chip" data-type="지분투자">지분투자</button>
+      <button class="chip" data-type="파트너십">파트너십</button>
+    </div>
+    <select class="region" id="regionSel"><option value="">모든 지역</option></select>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div class="tablebox">
+    <div class="state" id="loading"><div class="spinner"></div>데이터를 불러오는 중…</div>
+    <table id="dealTable" style="display:none">
+      <thead>
+        <tr>
+          <th>기사일자</th><th>유형</th><th>기사 제목</th>
+          <th>인수·투자기업 → 대상기업</th><th>딜 규모</th>
+          <th>지역</th><th>영역</th><th>요약</th><th>원문</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="state" id="empty" style="display:none">조건에 맞는 딜이 없습니다.</div>
+  </div>
+
+  <footer id="footer"></footer>
+</div>
+
+<script>
+  // ════════════════════════════════════════════════════════
+  // 설정: Apps Script 웹앱 배포 URL을 여기에 붙여넣으세요.
+  // 예: "https://script.google.com/macros/s/AKfycb.../exec"
+  // 비워두면 아래 샘플 데이터로 데모 모드가 동작합니다.
+  // ════════════════════════════════════════════════════════
+  var API_URL = "https://script.google.com/macros/s/AKfycby5pFAtEEQlIzCoDiQij1Fg-icOY9JbnlIRz_utohQN472hRvpr-lyf_rdlvAtJfXX8/exec";
+
+  // 데모용 샘플 데이터 (API_URL 설정 시 사용되지 않음)
+  var SAMPLE = [
+    { collected: "2026-08-12 09:00", date: "2026-08-11", type: "M&A",
+      titleEn: "WPP acquires data consultancy InfoSum to bolster identity offering",
+      titleKo: "WPP, 아이덴티티 역량 강화를 위해 데이터 컨설팅사 InfoSum 인수",
+      acquirer: "WPP", target: "InfoSum", price: "비공개", region: "영국", domain: "AdTech",
+      summary: "WPP가 InfoSum 인수로 데이터 클린룸 및 아이덴티티 역량 강화",
+      link: "https://example.com/1", source: "샘플" },
+    { collected: "2026-08-12 09:00", date: "2026-08-10", type: "M&A",
+      titleEn: "Publicis buys influencer marketing firm for $500 million",
+      titleKo: "Publicis, 인플루언서 마케팅 기업을 5억 달러에 인수",
+      acquirer: "Publicis", target: "Influencer Co.", price: "$500M", region: "미국", domain: "인플루언서",
+      summary: "Publicis가 인플루언서 마케팅 기업 인수로 크리에이터 이코노미 진출 가속",
+      link: "https://example.com/2", source: "샘플" },
+    { collected: "2026-08-12 09:00", date: "2026-08-09", type: "지분투자",
+      titleEn: "Hakuhodo DY takes minority stake in Southeast Asian creative shop",
+      titleKo: "Hakuhodo DY, 동남아 크리에이티브 에이전시 소수 지분 투자",
+      acquirer: "Hakuhodo DY", target: "SEA Creative", price: "비공개", region: "싱가포르", domain: "크리에이티브",
+      summary: "Hakuhodo DY가 동남아 크리에이티브 시장 교두보 확보를 위한 지분 투자 단행",
+      link: "https://example.com/3", source: "샘플" },
+    { collected: "2026-08-12 09:00", date: "2026-08-08", type: "파트너십",
+      titleEn: "Dentsu and Salesforce form strategic partnership on CDP integration",
+      titleKo: "Dentsu와 Salesforce, CDP 통합 분야 전략적 파트너십 체결",
+      acquirer: "Dentsu", target: "Salesforce", price: "비공개", region: "글로벌", domain: "MarTech",
+      summary: "Dentsu와 Salesforce의 CDP 데이터 통합 분야 전략적 파트너십 체결",
+      link: "https://example.com/4", source: "샘플" },
+    { collected: "2026-08-12 09:00", date: "2026-08-07", type: "M&A",
+      titleEn: "Omnicom completes acquisition of retail media platform",
+      titleKo: "Omnicom, 리테일 미디어 플랫폼 인수 완료",
+      acquirer: "Omnicom", target: "RetailX", price: "$1.2B", region: "미국", domain: "리테일미디어",
+      summary: "Omnicom이 리테일 미디어 플랫폼 인수 완료로 커머스 미디어 사업 확장",
+      link: "https://example.com/5", source: "샘플" },
+    { collected: "2026-08-12 09:00", date: "2026-08-05", type: "지분투자",
+      titleEn: "Stagwell invests in AI-powered ad measurement startup",
+      titleKo: "Stagwell, AI 광고 측정 스타트업에 투자",
+      acquirer: "Stagwell", target: "MeasureAI", price: "$40M", region: "미국", domain: "AI",
+      summary: "Stagwell이 AI 기반 광고 효과 측정 스타트업 지분 투자로 측정 역량 보강",
+      link: "https://example.com/6", source: "샘플" },
+    { collected: "2026-08-12 09:00", date: "2026-08-03", type: "M&A",
+      titleEn: "Havas snaps up Indian digital agency to expand APAC footprint",
+      titleKo: "Havas, APAC 확장 위해 인도 디지털 에이전시 인수",
+      acquirer: "Havas", target: "Digital India Co.", price: "Rs 600 crore", region: "인도", domain: "디지털마케팅",
+      summary: "Havas가 인도 디지털 에이전시 인수로 APAC 시장 입지 확대",
+      link: "https://example.com/7", source: "샘플" },
+    { collected: "2026-08-12 09:00", date: "2026-08-01", type: "파트너십",
+      titleEn: "ADK Holdings forms joint venture with Vietnamese media group",
+      titleKo: "ADK Holdings, 베트남 미디어 그룹과 합작법인 설립",
+      acquirer: "ADK Holdings", target: "VN Media Group", price: "비공개", region: "베트남", domain: "미디어",
+      summary: "ADK Holdings와 베트남 미디어 그룹의 현지 합작법인 설립",
+      link: "https://example.com/8", source: "샘플" }
+  ];
+
+  var ALL = [];
+  var filterType = "";
+  var filterRegion = "";
+  var filterText = "";
+
+  function badgeClass(type) {
+    if (type === "지분투자") return "invest";
+    if (type === "파트너십") return "partner";
+    return "ma";
+  }
+
+  function esc(s) {
+    return String(s || "").replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function render() {
+    var rows = ALL.filter(function (d) {
+      if (filterType && d.type !== filterType) return false;
+      if (filterRegion && d.region !== filterRegion) return false;
+      if (filterText) {
+        var hay = (d.titleEn + " " + d.titleKo + " " + d.acquirer + " " + d.target + " " +
+                   d.region + " " + d.domain + " " + d.summary).toLowerCase();
+        if (hay.indexOf(filterText) === -1) return false;
+      }
+      return true;
+    });
+
+    var tbody = document.getElementById("tbody");
+    var table = document.getElementById("dealTable");
+    var empty = document.getElementById("empty");
+    document.getElementById("count").textContent = rows.length + "건 표시";
+
+    if (rows.length === 0) {
+      table.style.display = "none";
+      empty.style.display = "block";
+      return;
+    }
+    empty.style.display = "none";
+    table.style.display = "table";
+
+    tbody.innerHTML = rows.map(function (d) {
+      var priceUndisc = !d.price || d.price === "비공개";
+      var arrow = d.type === "파트너십" ? "×" : "→";
+
+      return '<tr>' +
+        '<td class="date">' + esc(d.date) + '</td>' +
+        '<td><span class="badge ' + badgeClass(d.type) + '">' + esc(d.type) + '</span></td>' +
+        '<td class="title"><div class="ko">' + esc(d.titleKo || d.titleEn) + '</div><div class="en">' + esc(d.titleEn) + '</div></td>' +
+        '<td class="deal"><span class="acq">' + esc(d.acquirer) + '</span><span class="arrow">' + arrow + '</span>' + esc(d.target) + '</td>' +
+        '<td class="price' + (priceUndisc ? ' undisclosed' : '') + '">' + esc(priceUndisc ? "비공개" : d.price) + '</td>' +
+        '<td class="region">' + esc(d.region) + '</td>' +
+        '<td class="domain"><span>' + esc(d.domain) + '</span></td>' +
+        '<td class="summary">' + esc(d.summary) + '</td>' +
+        '<td class="linkcol">' + (d.link ? '<a class="srcbtn" href="' + esc(d.link) + '" target="_blank" rel="noopener">기사 보기</a>' : '—') + '</td>' +
+      '</tr>';
+    }).join("");
+  }
+
+  function buildStats() {
+    var counts = { total: ALL.length, "M&A": 0, "지분투자": 0, "파트너십": 0 };
+    var thisMonth = 0;
+    var now = new Date();
+    var ym = now.getFullYear() + "-" + ("0" + (now.getMonth() + 1)).slice(-2);
+    ALL.forEach(function (d) {
+      if (counts[d.type] !== undefined) counts[d.type]++;
+      if ((d.date || "").indexOf(ym) === 0) thisMonth++;
+    });
+    document.getElementById("stats").innerHTML =
+      '<div class="stat"><div class="num">' + counts.total + '</div><div class="lbl">전체 딜</div></div>' +
+      '<div class="stat ma"><div class="num">' + counts["M&A"] + '</div><div class="lbl">M&amp;A</div></div>' +
+      '<div class="stat invest"><div class="num">' + counts["지분투자"] + '</div><div class="lbl">지분투자</div></div>' +
+      '<div class="stat partner"><div class="num">' + counts["파트너십"] + '</div><div class="lbl">파트너십</div></div>' +
+      '<div class="stat"><div class="num">' + thisMonth + '</div><div class="lbl">이번 달</div></div>';
+  }
+
+  function buildRegionOptions() {
+    var seen = {};
+    var sel = document.getElementById("regionSel");
+    while (sel.options.length > 1) sel.remove(1);
+    ALL.forEach(function (d) {
+      var r = (d.region || "").trim();
+      if (r && !seen[r]) {
+        seen[r] = true;
+        var opt = document.createElement("option");
+        opt.value = r; opt.textContent = r;
+        sel.appendChild(opt);
+      }
+    });
+  }
+
+  function onData(deals, isDemo) {
+    ALL = deals || [];
+    ALL.sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
+
+    document.getElementById("loading").style.display = "none";
+    if (ALL.length && ALL[0].collected) {
+      document.getElementById("updated").textContent = "마지막 수집: " + ALL[0].collected + " KST";
+    }
+
+    var banner = document.getElementById("banner");
+    if (isDemo) {
+      banner.style.display = "block";
+      banner.textContent = "지금은 샘플 데이터로 표시 중입니다. 파일 상단 스크립트의 API_URL에 Apps Script 웹앱 배포 URL을 넣으면 실시간 데이터로 전환됩니다.";
+    } else {
+      banner.style.display = "none";
+    }
+    document.getElementById("footer").innerHTML = isDemo
+      ? "데모 모드 · 데이터 연결: <code>API_URL</code> 설정 필요"
+      : "데이터 출처: Google News RSS → Gemini 정제 → Apps Script API";
+
+    buildStats();
+    buildRegionOptions();
+    render();
+  }
+
+  function showError(msg) {
+    document.getElementById("loading").innerHTML = "⚠️ " + esc(msg);
+  }
+
+  document.getElementById("search").addEventListener("input", function (e) {
+    filterText = e.target.value.trim().toLowerCase();
+    render();
+  });
+
+  document.getElementById("typeChips").addEventListener("click", function (e) {
+    var btn = e.target.closest(".chip");
+    if (!btn) return;
+    document.querySelectorAll(".chip").forEach(function (c) { c.classList.remove("on"); });
+    btn.classList.add("on");
+    filterType = btn.getAttribute("data-type");
+    render();
+  });
+
+  document.getElementById("regionSel").addEventListener("change", function (e) {
+    filterRegion = e.target.value;
+    render();
+  });
+
+  // ── 데이터 로드 ──
+  if (API_URL) {
+    fetch(API_URL + (API_URL.indexOf("?") === -1 ? "?" : "&") + "format=json")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) { onData(data, false); })
+      .catch(function (err) {
+        showError("데이터 로드 실패 (" + err.message + "). Apps Script 배포 URL과 액세스 권한(링크가 있는 모든 사용자)을 확인하세요.");
+      });
+  } else {
+    onData(SAMPLE, true);
+  }
+</script>
+</body>
+</html>
