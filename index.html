@@ -135,11 +135,11 @@
   .badge.invest  { background: var(--invest-bg);  color: var(--invest); }
   .badge.partner { background: var(--partner-bg); color: var(--partner); }
 
-  td.title { max-width: 340px; }
+  td.title { min-width: 340px; max-width: 480px; }
   td.title .ko { font-weight: 700; }
   td.title .en { color: var(--sub); font-size: 12px; margin-top: 3px; }
 
-  td.deal { white-space: nowrap; }
+  td.deal { max-width: 150px; }
   td.deal .acq { font-weight: 700; }
   td.deal .arrow { color: var(--sub); margin: 0 5px; }
   td.price { white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -148,7 +148,7 @@
   td.domain span {
     background: var(--chip-bg); border-radius: 6px; padding: 2px 8px; font-size: 12px; color: var(--sub);
   }
-  td.summary { max-width: 360px; }
+  td.summary { min-width: 240px; max-width: 340px; }
   td.linkcol { white-space: nowrap; }
   .srcbtn {
     display: inline-block; padding: 5px 11px; border: 1px solid var(--line);
@@ -208,9 +208,9 @@
     <table id="dealTable" style="display:none">
       <thead>
         <tr>
-          <th>기사일자</th><th>유형</th><th>기사 제목</th>
+          <th>기사일자</th><th>유형</th><th>기사 제목</th><th>요약</th>
           <th>인수·투자기업 → 대상기업</th><th>딜 규모</th>
-          <th>지역</th><th>영역</th><th>요약</th><th>원문</th>
+          <th>지역</th><th>영역</th><th>원문</th>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
@@ -331,11 +331,11 @@
         '<td class="date">' + esc(d.date) + '</td>' +
         '<td><span class="badge ' + badgeClass(d.type) + '">' + esc(d.type) + '</span></td>' +
         '<td class="title"><div class="ko">' + esc(d.titleKo || d.titleEn) + '</div><div class="en">' + esc(d.titleEn) + '</div></td>' +
+        '<td class="summary">' + esc(d.summary) + '</td>' +
         '<td class="deal"><span class="acq">' + esc(d.acquirer) + '</span><span class="arrow">' + arrow + '</span>' + esc(d.target) + '</td>' +
         '<td class="price' + (priceUndisc ? ' undisclosed' : '') + '">' + esc(priceUndisc ? "비공개" : d.price) + '</td>' +
         '<td class="region">' + esc(d.region) + '</td>' +
         '<td class="domain"><span>' + esc(d.domain) + '</span></td>' +
-        '<td class="summary">' + esc(d.summary) + '</td>' +
         '<td class="linkcol">' + (d.link ? '<a class="srcbtn" href="' + esc(d.link) + '" target="_blank" rel="noopener">기사 보기</a>' : '—') + '</td>' +
       '</tr>';
     }).join("");
