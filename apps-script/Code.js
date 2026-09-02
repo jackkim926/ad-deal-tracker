@@ -336,7 +336,7 @@ function doGet(e) {
       .setMimeType(ContentService.MimeType.JSON);
   }
 
-  // 원격 관리: ?run=status | collect | setup (&token=<스크립트 속성 ADMIN_TOKEN> 필수)
+  // 원격 관리: ?run=status | collect | setup | cleanup (&token=<스크립트 속성 ADMIN_TOKEN> 필수)
   // 대시보드가 공개 웹에 올라가면 배포 URL이 노출되므로,
   // 데이터 조회(format=json)는 열어두되 관리 동작에는 토큰을 요구한다.
   if (e && e.parameter && e.parameter.run) {
@@ -362,6 +362,12 @@ function doGet(e) {
         out.hasKey = !!props.getProperty("GEMINI_API_KEY");
         if (out.hasKey) { out.stats = collectDeals(); setDailyTrigger(); out.geminiError = LAST_GEMINI_ERROR; out.ok = true; }
         else out.error = "GEMINI_API_KEY 미설정";
+      } else if (e.parameter.run === "cleanup") {
+        // ?run=cleanup           → 삭제 대상만 계산 (시트 변경 없음)
+        // ?run=cleanup&apply=1   → 실제 삭제
+        out.applied = (e.parameter.apply === "1");
+        out.duplicates = cleanupDuplicates(out.applied);
+        out.ok = true;
       } else if (e.parameter.run === "models") {
         var mkey = props.getProperty("GEMINI_API_KEY");
         var mres = UrlFetchApp.fetch(
