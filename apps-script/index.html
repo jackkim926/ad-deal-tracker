@@ -1,0 +1,282 @@
+<style>
+  :root {
+    --bg: #f5f6fa;
+    --card: #ffffff;
+    --ink: #1c2033;
+    --sub: #6b7285;
+    --line: #e4e7ef;
+    --navy: #1a237e;
+    --ma: #2f5fd0;      --ma-bg: #e8effc;
+    --invest: #1e8e5a;  --invest-bg: #e4f5ec;
+    --partner: #b25c0e; --partner-bg: #fdf0e0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
+    font-size: 14px; line-height: 1.5;
+  }
+  .wrap { max-width: none; margin: 0 auto; padding: 24px 20px 60px; }
+
+  /* ── 헤더 ── */
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+  header h1 { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; }
+  header .updated { color: var(--sub); font-size: 12px; }
+
+  .stats { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0 20px; }
+  .stat {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 16px; min-width: 108px;
+  }
+  .stat .num { font-size: 20px; font-weight: 800; }
+  .stat .lbl { font-size: 12px; color: var(--sub); }
+  .stat.ma .num { color: var(--ma); }
+  .stat.invest .num { color: var(--invest); }
+  .stat.partner .num { color: var(--partner); }
+
+  /* ── 컨트롤 ── */
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+  .search {
+    flex: 1; min-width: 220px; max-width: 380px;
+    padding: 9px 14px; border: 1px solid var(--line); border-radius: 8px;
+    font-size: 14px; background: var(--card); color: var(--ink); outline: none;
+  }
+  .search:focus { border-color: var(--navy); }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    padding: 7px 14px; border: 1px solid var(--line); border-radius: 999px;
+    background: var(--card); color: var(--sub); font-size: 13px; cursor: pointer; font-weight: 600;
+  }
+  .chip.on { background: var(--navy); border-color: var(--navy); color: #fff; }
+  select.region {
+    padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--card); color: var(--ink); font-size: 13px;
+  }
+
+  /* ── 테이블 ── */
+  .tablebox { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; min-width: 880px; }
+  thead th {
+    position: sticky; top: 0; background: var(--navy); color: #fff;
+    font-size: 12px; font-weight: 700; padding: 11px 12px; text-align: left; white-space: nowrap;
+  }
+  tbody td { padding: 12px; border-top: 1px solid var(--line); vertical-align: top; }
+  tbody tr:hover { background: #f8f9fd; }
+
+  td.date { white-space: nowrap; color: var(--sub); font-size: 13px; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 700; white-space: nowrap;
+  }
+  .badge.ma      { background: var(--ma-bg);      color: var(--ma); }
+  .badge.invest  { background: var(--invest-bg);  color: var(--invest); }
+  .badge.partner { background: var(--partner-bg); color: var(--partner); }
+
+  td.title { width: 27%; min-width: 210px; }
+  td.title .ko { font-weight: 700; }
+  td.title .ko a { color: var(--ink); text-decoration: none; }
+  td.title .ko a:hover { color: var(--ma); text-decoration: underline; }
+  td.title .en { color: var(--sub); font-size: 12px; margin-top: 3px; }
+
+  td.deal { max-width: 150px; }
+  td.deal .acq { font-weight: 700; }
+  td.deal .arrow { color: var(--sub); margin: 0 5px; }
+  td.price { white-space: nowrap; font-weight: 600; }
+  td.price.undisclosed { color: var(--sub); font-weight: 400; }
+  td.region, td.domain { white-space: nowrap; }
+  td.domain span {
+    background: #eef0f6; border-radius: 6px; padding: 2px 8px; font-size: 12px; color: #4a5068;
+  }
+  td.summary { width: 23%; min-width: 180px; color: #3a415a; }
+  td.linkcol { white-space: nowrap; }
+  .srcbtn {
+    display: inline-block; padding: 5px 11px; border: 1px solid var(--line);
+    border-radius: 7px; font-size: 12px; font-weight: 600;
+    color: var(--ma); text-decoration: none; background: #fff;
+  }
+  .srcbtn:hover { border-color: var(--ma); background: var(--ma-bg); }
+
+  .state { padding: 60px 20px; text-align: center; color: var(--sub); }
+  .spinner {
+    width: 28px; height: 28px; margin: 0 auto 12px;
+    border: 3px solid var(--line); border-top-color: var(--navy);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 16px 10px 40px; }
+    header h1 { font-size: 18px; }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>🌏 광고업계 딜 트래커</h1>
+    <span class="updated" id="updated"></span>
+  </header>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="controls">
+    <input class="search" id="search" type="search" placeholder="기업명·키워드 검색 (예: Dentsu, AdTech)">
+    <div class="chips" id="typeChips">
+      <button class="chip on" data-type="">전체</button>
+      <button class="chip" data-type="M&A">M&amp;A</button>
+      <button class="chip" data-type="지분투자">지분투자</button>
+      <button class="chip" data-type="파트너십">파트너십</button>
+    </div>
+    <select class="region" id="regionSel"><option value="">모든 지역</option></select>
+  </div>
+
+  <div class="tablebox">
+    <div class="state" id="loading"><div class="spinner"></div>데이터를 불러오는 중…</div>
+    <table id="dealTable" style="display:none">
+      <thead>
+        <tr>
+          <th>기사일자</th><th>유형</th><th>기사 제목</th><th>요약</th>
+          <th>인수·투자기업 → 대상기업</th><th>딜 규모</th>
+          <th>지역</th><th>영역</th><th>원문</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="state" id="empty" style="display:none">조건에 맞는 딜이 없습니다.</div>
+  </div>
+</div>
+
+<script>
+  var ALL = [];
+  var filterType = "";
+  var filterRegion = "";
+  var filterText = "";
+
+  function badgeClass(type) {
+    if (type === "지분투자") return "invest";
+    if (type === "파트너십") return "partner";
+    return "ma";
+  }
+
+  function esc(s) {
+    return String(s || "").replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function render() {
+    var rows = ALL.filter(function (d) {
+      if (filterType && d.type !== filterType) return false;
+      if (filterRegion && d.region !== filterRegion) return false;
+      if (filterText) {
+        var hay = (d.titleEn + " " + d.titleKo + " " + d.acquirer + " " + d.target + " " +
+                   d.region + " " + d.domain + " " + d.summary).toLowerCase();
+        if (hay.indexOf(filterText) === -1) return false;
+      }
+      return true;
+    });
+
+    var tbody = document.getElementById("tbody");
+    var table = document.getElementById("dealTable");
+    var empty = document.getElementById("empty");
+
+    if (rows.length === 0) {
+      table.style.display = "none";
+      empty.style.display = "block";
+      return;
+    }
+    empty.style.display = "none";
+    table.style.display = "table";
+
+    tbody.innerHTML = rows.map(function (d) {
+      var titleKo = esc(d.titleKo || d.titleEn);
+      var titleHtml = d.link
+        ? '<a href="' + esc(d.link) + '" target="_blank" rel="noopener">' + titleKo + ' ↗</a>'
+        : titleKo;
+      var priceUndisc = !d.price || d.price === "비공개";
+      var dealHtml = d.type === "파트너십"
+        ? '<span class="acq">' + esc(d.acquirer) + '</span><span class="arrow">×</span>' + esc(d.target)
+        : '<span class="acq">' + esc(d.acquirer) + '</span><span class="arrow">→</span>' + esc(d.target);
+
+      return '<tr>' +
+        '<td class="date">' + esc(d.date) + '</td>' +
+        '<td><span class="badge ' + badgeClass(d.type) + '">' + esc(d.type) + '</span></td>' +
+        '<td class="title"><div class="ko">' + titleHtml + '</div><div class="en">' + esc(d.titleEn) + '</div></td>' +
+        '<td class="summary">' + esc(d.summary) + '</td>' +
+        '<td class="deal">' + dealHtml + '</td>' +
+        '<td class="price' + (priceUndisc ? ' undisclosed' : '') + '">' + esc(priceUndisc ? "비공개" : d.price) + '</td>' +
+        '<td class="region">' + esc(d.region) + '</td>' +
+        '<td class="domain"><span>' + esc(d.domain) + '</span></td>' +
+        '<td class="linkcol">' + (d.link ? '<a class="srcbtn" href="' + esc(d.link) + '" target="_blank" rel="noopener">기사 보기</a>' : '—') + '</td>' +
+      '</tr>';
+    }).join("");
+  }
+
+  function buildStats() {
+    var counts = { total: ALL.length, "M&A": 0, "지분투자": 0, "파트너십": 0 };
+    var thisMonth = 0;
+    var ym = new Date().toISOString().substring(0, 7);
+    ALL.forEach(function (d) {
+      if (counts[d.type] !== undefined) counts[d.type]++;
+      if ((d.date || "").indexOf(ym) === 0) thisMonth++;
+    });
+    document.getElementById("stats").innerHTML =
+      '<div class="stat"><div class="num">' + counts.total + '</div><div class="lbl">전체 딜</div></div>' +
+      '<div class="stat ma"><div class="num">' + counts["M&A"] + '</div><div class="lbl">M&amp;A</div></div>' +
+      '<div class="stat invest"><div class="num">' + counts["지분투자"] + '</div><div class="lbl">지분투자</div></div>' +
+      '<div class="stat partner"><div class="num">' + counts["파트너십"] + '</div><div class="lbl">파트너십</div></div>' +
+      '<div class="stat"><div class="num">' + thisMonth + '</div><div class="lbl">이번 달</div></div>';
+  }
+
+  function buildRegionOptions() {
+    var seen = {};
+    var sel = document.getElementById("regionSel");
+    ALL.forEach(function (d) {
+      var r = (d.region || "").trim();
+      if (r && !seen[r]) {
+        seen[r] = true;
+        var opt = document.createElement("option");
+        opt.value = r; opt.textContent = r;
+        sel.appendChild(opt);
+      }
+    });
+  }
+
+  function onData(deals) {
+    ALL = deals || [];
+    // 기사일자 내림차순
+    ALL.sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
+
+    document.getElementById("loading").style.display = "none";
+    if (ALL.length && ALL[0].collected) {
+      document.getElementById("updated").textContent = "마지막 수집: " + ALL[0].collected + " KST";
+    }
+    buildStats();
+    buildRegionOptions();
+    render();
+  }
+
+  function onError(err) {
+    document.getElementById("loading").innerHTML = "⚠️ 데이터 로드 실패: " + esc(err && err.message);
+  }
+
+  document.getElementById("search").addEventListener("input", function (e) {
+    filterText = e.target.value.trim().toLowerCase();
+    render();
+  });
+
+  document.getElementById("typeChips").addEventListener("click", function (e) {
+    var btn = e.target.closest(".chip");
+    if (!btn) return;
+    document.querySelectorAll(".chip").forEach(function (c) { c.classList.remove("on"); });
+    btn.classList.add("on");
+    filterType = btn.getAttribute("data-type");
+    render();
+  });
+
+  document.getElementById("regionSel").addEventListener("change", function (e) {
+    filterRegion = e.target.value;
+    render();
+  });
+
+  google.script.run.withSuccessHandler(onData).withFailureHandler(onError).getDeals();
+</script>
