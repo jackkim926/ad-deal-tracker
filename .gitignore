@@ -1,3 +1,4 @@
 # clasp 로컬 설정 (scriptId·스프레드시트 ID 포함)
 apps-script/.clasp.json
 .clasprc.json
+apps-script/secrets.js

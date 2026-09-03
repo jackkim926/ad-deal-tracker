@@ -51,7 +51,10 @@ var LAST_GEMINI_ERROR = "";  // 원격 진단용: 마지막 Gemini 실패 사유
 // 소스를 공개 저장소에 올리므로 코드에 두지 않고 스크립트 속성에서 읽는다.
 // 최초 1회 saveAdminToken() 실행 필요. 미설정이면 원격 관리 동작은 전부 거부된다.
 function adminToken_() {
-  return PropertiesService.getScriptProperties().getProperty("ADMIN_TOKEN") || "";
+  var stored = PropertiesService.getScriptProperties().getProperty("ADMIN_TOKEN");
+  if (stored) return stored;
+  // secrets.js (gitignore 대상, clasp 로만 배포됨) 의 값을 폴백으로 쓴다
+  return (typeof LOCAL_ADMIN_TOKEN !== "undefined") ? LOCAL_ADMIN_TOKEN : "";
 }
 
 
