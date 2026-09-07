@@ -241,14 +241,29 @@
     });
   }
 
+  // "2026-09-07 9:26" / "2026-09-07 09:26" → 202609070926 (시가 한 자리여도 비교 가능)
+  function collectedKey(s) {
+    var m = /(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})/.exec(String(s || ""));
+    if (!m) return 0;
+    return Number(m[1] + m[2] + m[3] + ("0" + m[4]).slice(-2) + m[5]);
+  }
+
   function onData(deals) {
     ALL = deals || [];
     // 기사일자 내림차순
     ALL.sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
 
     document.getElementById("loading").style.display = "none";
-    if (ALL.length && ALL[0].collected) {
-      document.getElementById("updated").textContent = "마지막 수집: " + ALL[0].collected + " KST";
+    // 기사일자 최신 행이 아니라 수집일시가 가장 늦은 행을 보여준다.
+    // (새 날짜 기사가 없는 날에도 수집은 돌았다는 것이 보이도록)
+    var lastCollected = "";
+    var lastKey = 0;
+    for (var li = 0; li < ALL.length; li++) {
+      var k = collectedKey(ALL[li].collected);
+      if (k > lastKey) { lastKey = k; lastCollected = ALL[li].collected; }
+    }
+    if (lastCollected) {
+      document.getElementById("updated").textContent = "마지막 수집: " + lastCollected + " KST";
     }
     buildStats();
     buildRegionOptions();

@@ -1,5 +1,5 @@
 // ============================================================
-// Global AdTech & Agency Deal Tracker  v11.0
+// Global AdTech & Agency Deal Tracker  v11.12
 // M&A · 지분투자 · 파트너십 수집 → Gemini 정제 → 웹 대시보드
 // ============================================================
 //
@@ -23,7 +23,7 @@
 //   1. saveGeminiKey()  실행 → API 키 저장
 //   2. testGeminiKey()  실행 → "✅ API 정상" 확인
 //   3. collectDeals()   실행 → 첫 수집
-//   4. setDailyTrigger() 실행 → 매일 오전 9시 자동 수집
+//   4. setDailyTrigger() 실행 → 매일 오전 9시 자동 수집 + 3시간마다 watchdog(실패 시 재수집·중복 정리·트리거 복구)
 //   5. 배포 → 새 배포 → 웹 앱 (액세스: 링크가 있는 모든 사용자)
 //      → 발급된 URL이 대시보드 주소
 // ============================================================
@@ -41,11 +41,27 @@ var TIME_WINDOW  = "when:30d";
 var MAX_AGE_DAYS = 32;
 
 var GEMINI_MODEL  = "gemini-flash-latest";   // 최신 Flash 자동 추적 별칭 (구모델 은퇴에 영향받지 않음)
+// 503(과부하)/429(쿼터) 시 순서대로 폴백. 별칭이 가리키는 최신 모델이 과부하일 때 고정 버전으로 우회한다.
+var GEMINI_MODELS = [GEMINI_MODEL, "gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"];
+var GEMINI_RETRY_WAITS_MS = [3000, 8000];   // 같은 모델에서 503/429 재시도 간격 (모델당 최대 3회 호출)
 var EXTRACT_CHUNK = 15;      // Gemini 1회 호출당 기사 수 (필드 추출까지 하므로 소량)
 
 var DEAL_COLS = 13;          // A~M
 
 var LAST_GEMINI_ERROR = "";  // 원격 진단용: 마지막 Gemini 실패 사유
+
+// v11.11 — 운영 안정화
+var REVIEW_SHEET     = "심사이력";   // Gemini가 무관/동일딜로 판정한 기사 링크. 다음 실행부터 재심사하지 않는다 (판정 흔들림·토큰 낭비 차단)
+var REVIEW_KEEP_ROWS = 6000;         // 심사이력 최대 보관 행 (초과분은 오래된 것부터 삭제. 32일 지난 기사는 어차피 프리필터에서 탈락)
+var RUNLOG_SHEET     = "실행로그";   // 매 실행의 통계·오류. Apps Script 로그 없이도 원인 추적 가능
+var RUNLOG_KEEP_ROWS = 400;
+var GEMINI_CHUNK_BUDGET_MS = 90 * 1000;  // 청크 1개에 허용하는 Gemini 총 시간 (재시도·폴백 포함). 6분 하드리밋 보호
+var LOCK_WAIT_MS     = 10 * 1000;        // 트리거와 수동 실행이 겹칠 때 대기 시간. 못 잡으면 이번 실행은 건너뜀
+
+// v11.12 — 무인 운영 (사람이 매일 들어오지 않아도 스스로 복구)
+var WATCHDOG_EVERY_HOURS = 3;   // 감시 트리거 주기
+var STALE_RUN_HOURS      = 22;  // 마지막 실행이 이보다 오래됐으면(트리거 소실·실패 등) 감시 트리거가 대신 수집
+var RETRY_AFTER_HOURS    = 1;   // 마지막 실행이 오류/Gemini 실패/타임아웃이면 이만큼 지난 뒤 재수집
 
 // 원격 관리(?run=...) 호출용 비밀 토큰.
 // 소스를 공개 저장소에 올리므로 코드에 두지 않고 스크립트 속성에서 읽는다.
@@ -287,7 +303,54 @@ function setDailyTrigger() {
     }
   }
   ScriptApp.newTrigger("collectDeals").timeBased().everyDays(1).atHour(9).create();
-  toast_("매일 오전 9시 자동 수집이 등록되었습니다.", "✅ Trigger Set");
+  ensureTriggers_();
+  toast_("매일 오전 9시 자동 수집 + 3시간 감시 트리거가 등록되었습니다.", "✅ Trigger Set");
+}
+
+/** 필요한 트리거가 빠져 있으면 만들어 넣는다 (있으면 손대지 않음). 수집 끝·watchdog·?run=setup 에서 호출. */
+function ensureTriggers_() {
+  var have = {};
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) have[triggers[i].getHandlerFunction()] = true;
+  var created = [];
+  if (!have["collectDeals"]) {
+    ScriptApp.newTrigger("collectDeals").timeBased().everyDays(1).atHour(9).create();
+    created.push("collectDeals");
+  }
+  if (!have["watchdog"]) {
+    ScriptApp.newTrigger("watchdog").timeBased().everyHours(WATCHDOG_EVERY_HOURS).create();
+    created.push("watchdog");
+  }
+  if (created.length) Logger.log("[TRIGGER] 복구: " + created.join(", "));
+  return created;
+}
+
+/**
+ * 감시 트리거 (3시간마다). 사람이 들어오지 않아도:
+ *   - 트리거가 지워졌으면 다시 만든다
+ *   - 마지막 실행이 22시간 넘게 없으면(9시 실행이 죽었거나 트리거 소실) 대신 수집한다
+ *   - 마지막 실행이 오류/Gemini 실패/타임아웃이면 1시간 뒤부터 재수집한다 (보류된 청크 회수)
+ * 수집 자체가 LockService 로 보호되므로 9시 실행과 겹쳐도 안전하다.
+ */
+function watchdog() {
+  var created = ensureTriggers_();
+  var last = lastRunLog_();
+  var reason = "";
+  if (!last) {
+    reason = "실행 기록 없음";
+  } else {
+    var ageH = (new Date().getTime() - last.at.getTime()) / 3600000;
+    var bad  = !!(last.error || last.geminiFailed || last.timedOut);
+    if (ageH > STALE_RUN_HOURS)          reason = "마지막 실행 " + Math.round(ageH) + "시간 전";
+    else if (bad && ageH > RETRY_AFTER_HOURS) reason = "직전 실행 실패/보류 재시도";
+  }
+  if (!reason) {
+    Logger.log("[WATCHDOG] 정상 (트리거 복구 " + created.length + "건)");
+    return { ok: true, ran: false, triggersCreated: created };
+  }
+  Logger.log("[WATCHDOG] 수집 실행 — " + reason);
+  var stats = runPipeline_(false, "watchdog: " + reason);
+  return { ok: true, ran: true, reason: reason, triggersCreated: created, stats: stats };
 }
 
 
@@ -299,7 +362,7 @@ function setDailyTrigger() {
 //   cleanupDuplicates(true)  → 실제 삭제
 function cleanupDuplicates(apply) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
-  if (!sheet || sheet.getLastRow() <= 1) { Logger.log("시트가 비어 있습니다."); return; }
+  if (!sheet || sheet.getLastRow() <= 1) { Logger.log("시트가 비어 있습니다."); return 0; }
 
   var n = sheet.getLastRow() - 1;
   var values = sheet.getRange(2, 1, n, DEAL_COLS).getValues();
@@ -355,16 +418,29 @@ function doGet(e) {
         out.ok = true;
         out.hasKey = !!props.getProperty("GEMINI_API_KEY");
         out.triggers = ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); });
-        var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+        var ss0 = SpreadsheetApp.getActiveSpreadsheet();
+        var sh = ss0.getSheetByName(SHEET_NAME);
         out.rows = sh ? Math.max(0, sh.getLastRow() - 1) : 0;
+        var rv = ss0.getSheetByName(REVIEW_SHEET);
+        out.reviewed = rv ? Math.max(0, rv.getLastRow() - 1) : 0;
+        out.recentRuns = recentRunLogs_(ss0, 5);
       } else if (e.parameter.run === "collect") {
-        out.stats = collectDeals();
+        out.stats = runPipeline_(false, "web");
         out.geminiError = LAST_GEMINI_ERROR;
         out.ok = true;
       } else if (e.parameter.run === "setup") {
         out.hasKey = !!props.getProperty("GEMINI_API_KEY");
-        if (out.hasKey) { out.stats = collectDeals(); setDailyTrigger(); out.geminiError = LAST_GEMINI_ERROR; out.ok = true; }
+        if (out.hasKey) { out.stats = runPipeline_(false, "web-setup"); setDailyTrigger(); out.geminiError = LAST_GEMINI_ERROR; out.ok = true; }
         else out.error = "GEMINI_API_KEY 미설정";
+      } else if (e.parameter.run === "ensure") {
+        // 트리거 점검·복구만 (수집 안 함)
+        out.created = ensureTriggers_();
+        out.triggers = ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); });
+        out.ok = true;
+      } else if (e.parameter.run === "watchdog") {
+        out.result = watchdog();
+        out.geminiError = LAST_GEMINI_ERROR;
+        out.ok = true;
       } else if (e.parameter.run === "cleanup") {
         // ?run=cleanup           → 삭제 대상만 계산 (시트 변경 없음)
         // ?run=cleanup&apply=1   → 실제 삭제
@@ -426,12 +502,39 @@ function getDeals() {
 // ============================================================
 // 메인 파이프라인
 // ============================================================
-function collectDeals() { return runPipeline_(false); }
-function dryRun()       { return runPipeline_(true); }
+function collectDeals() { return runPipeline_(false, "collect"); }
+function dryRun()       { return runPipeline_(true,  "dry-run"); }
 
-function runPipeline_(isDryRun) {
+/**
+ * 진입점. 동시 실행 방지(LockService) + 실행로그 기록을 담당하고 실제 작업은 runPipelineLocked_ 에 위임.
+ * 트리거(atHour(9)는 09:00~09:59 사이 임의 시각)와 수동 실행이 겹치면 같은 딜이 두 번 적재되던 문제를 막는다.
+ */
+function runPipeline_(isDryRun, mode) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(LOCK_WAIT_MS)) {
+    Logger.log("[LOCK] 다른 수집이 실행 중 — 이번 실행은 건너뜀");
+    toast_("다른 수집이 실행 중입니다. 잠시 후 다시 시도하세요.", "⏳ Busy");
+    return { skipped: true, reason: "locked" };
+  }
+
   var startedAt = new Date().getTime();
+  var stats = { fetched: 0, candidates: 0, skippedReviewed: 0, reviewed: 0, loaded: 0,
+                pairDropped: 0, geminiFailed: false, timedOut: false, cleaned: 0 };
+  var error = "";
+  try {
+    runPipelineLocked_(isDryRun, startedAt, stats);
+  } catch (e) {
+    error = String(e && e.stack ? e.stack : e);
+    Logger.log("[PIPELINE FAIL] " + error);
+    throw e;
+  } finally {
+    try { writeRunLog_(mode || "", startedAt, stats, error); } catch (e2) { Logger.log("[RUNLOG FAIL] " + e2); }
+    lock.releaseLock();
+  }
+  return stats;
+}
 
+function runPipelineLocked_(isDryRun, startedAt, stats) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_NAME) || ss.insertSheet(SHEET_NAME);
   ensureHeader_(sheet);
@@ -440,10 +543,11 @@ function runPipeline_(isDryRun) {
   var historyTitles = [];
   var historyPrints = [];
   var historyPairs  = {};
+  var historyLinks  = {};
   if (sheet.getLastRow() > 1) {
     var rowCount = Math.min(sheet.getLastRow() - 1, HISTORY_LOOKBACK);
-    // D~G열: 제목(EN), 제목(KO), 인수·투자기업, 대상기업
-    var pastValues = sheet.getRange(2, 4, rowCount, 4).getValues();
+    // D~L열: 제목(EN), 제목(KO), 인수·투자기업, 대상기업, ..., 링크
+    var pastValues = sheet.getRange(2, 4, rowCount, 9).getValues();
     for (var h = 0; h < pastValues.length; h++) {
       var pastTitle = String(pastValues[h][0] || "").trim();
       if (pastTitle) {
@@ -452,15 +556,20 @@ function runPipeline_(isDryRun) {
       }
       var pastPair = dealPairKey_(pastValues[h][2], pastValues[h][3]);
       if (pastPair) historyPairs[pastPair] = true;
+      var pastLink = String(pastValues[h][8] || "").trim();
+      if (pastLink) historyLinks[pastLink] = true;
     }
   }
+  // 이미 Gemini가 판정한 기사(무관/동일딜)는 다시 묻지 않는다
+  var reviewedLinks = loadReviewedLinks_(ss);
 
   // ── 2. 수집 ──
   var items = fetchAllFeeds_(startedAt);
+  stats.fetched = items.length;
   Logger.log("[수집] " + items.length + "건");
   if (items.length === 0) {
     toast_("RSS 응답이 비어 있습니다.", "⚠️ No Feed Data");
-    return { fetched: 0, candidates: 0, loaded: 0, geminiFailed: false };
+    return stats;
   }
   items.sort(function (a, b) { return parseDate_(b.pubDate) - parseDate_(a.pubDate); });
 
@@ -479,6 +588,8 @@ function runPipeline_(isDryRun) {
     if (historyTitles.indexOf(titleLower) !== -1) continue;
     if (seenTitles[titleLower]) continue;
     if (item.link && seenLinks[item.link]) continue;
+    if (item.link && historyLinks[item.link]) continue;
+    if (item.link && reviewedLinks[item.link]) { stats.skippedReviewed++; continue; }
 
     var fp = dealFingerprint_(item.headline);
     var isDup = false;
@@ -495,32 +606,47 @@ function runPipeline_(isDryRun) {
     batchPrints.push(fp);
     candidates.push(item);
   }
-  Logger.log("[프리필터 통과] " + candidates.length + "건 → Gemini 정제");
+  stats.candidates = candidates.length;
+  Logger.log("[프리필터 통과] " + candidates.length + "건 → Gemini 정제 (이미 심사된 " + stats.skippedReviewed + "건 제외)");
 
   // ── 4. Gemini 판정 + 필드 추출 (fail-closed) ──
-  var deals = [];
+  // 청크 단위로 즉시 시트에 적재한다. 예전에는 실행 맨 끝에 한 번만 적재해서
+  // 6분 하드리밋에 걸리면 그날 결과가 통째로 사라졌다.
   var batchPairs = {};
-  var gateFailed = false;
-  var pairDropped = 0;
+  var written    = 0;       // 이번 실행에서 딜DB에 넣은 행 수
+  var dryDeals   = [];
+  var maxChunkMs = 0;
 
   for (var c = 0; c < candidates.length; c += EXTRACT_CHUNK) {
-    if ((new Date().getTime() - startedAt) > MAX_RUNTIME_MS) {
-      Logger.log("[TIMEOUT GUARD] 실행시간 초과 — 남은 청크는 다음 실행에서 처리");
+    var elapsed = new Date().getTime() - startedAt;
+    var need    = Math.max(maxChunkMs, GEMINI_CHUNK_BUDGET_MS);
+    if (elapsed + need > MAX_RUNTIME_MS) {
+      Logger.log("[TIMEOUT GUARD] 남은 시간 부족 (" + Math.round(elapsed / 1000) + "s 경과) — 남은 " +
+                 (candidates.length - c) + "건은 다음 실행에서 처리");
+      stats.timedOut = true;
       break;
     }
     var chunk = candidates.slice(c, c + EXTRACT_CHUNK);
+    var chunkStart = new Date().getTime();
+    var deadline   = chunkStart + GEMINI_CHUNK_BUDGET_MS;
 
-    var results = extractBatchWithGemini_(chunk);
-    if (results === null) {
+    var results = extractBatchWithGemini_(chunk, deadline);
+    if (results === null && new Date().getTime() < deadline - 10000) {
       Utilities.sleep(2000);
-      results = extractBatchWithGemini_(chunk);   // 1회 재시도
+      results = extractBatchWithGemini_(chunk, deadline);   // 1회 재시도 (예산 안에서만)
     }
-    if (results === null) { gateFailed = true; continue; }  // 이 청크는 보류
+    maxChunkMs = Math.max(maxChunkMs, new Date().getTime() - chunkStart);
+    if (results === null) { stats.geminiFailed = true; continue; }  // 이 청크는 보류 (심사이력에도 안 남김 → 다음 실행에서 재심사)
+    stats.reviewed += chunk.length;
 
+    var chunkDeals = [];
+    var reviewRows = [];
+    var stamp = Utilities.formatDate(new Date(), "Asia/Seoul", "yyyy-MM-dd HH:mm");
     for (var r = 0; r < chunk.length; r++) {
       var res = results[r];
       if (!res || !res.relevant) {
         Logger.log("  ✂ 탈락 │ " + chunk[r].headline);
+        if (chunk[r].link) reviewRows.push([stamp, chunk[r].link, "무관", chunk[r].headline, chunk[r].feed]);
         continue;
       }
 
@@ -530,14 +656,15 @@ function runPipeline_(isDryRun) {
       var pairKey = dealPairKey_(res.acquirer, res.target);
       if (pairKey) {
         if (historyPairs[pairKey] || batchPairs[pairKey]) {
-          pairDropped++;
+          stats.pairDropped++;
           Logger.log("  ⊘ 동일 딜 중복 │ " + pairKey + " │ " + chunk[r].headline);
+          if (chunk[r].link) reviewRows.push([stamp, chunk[r].link, "동일딜", chunk[r].headline, chunk[r].feed]);
           continue;
         }
         batchPairs[pairKey] = true;
       }
 
-      deals.push({
+      chunkDeals.push({
         pubDate:  chunk[r].pubDate,
         titleEn:  chunk[r].headline,
         titleKo:  res.title_ko   || "",
@@ -552,32 +679,47 @@ function runPipeline_(isDryRun) {
         source:   chunk[r].feed
       });
     }
+
+    stats.loaded += chunkDeals.length;
+    if (isDryRun) {
+      dryDeals = dryDeals.concat(chunkDeals);
+    } else {
+      // 후보가 최신순이므로 이번 실행분 아래에 이어 붙여 시트 상단 순서를 유지한다
+      if (chunkDeals.length) written += appendDeals_(sheet, chunkDeals, 2 + written);
+      if (reviewRows.length) appendReviewRows_(ss, reviewRows);
+    }
   }
 
-  if (gateFailed) {
+  if (stats.geminiFailed) {
     Logger.log("[GEMINI] 일부 청크 호출 실패 — 해당 청크는 적재 보류 (fail-closed)");
     toast_("Gemini 호출 일부 실패. testGeminiKey()로 키 상태를 확인하세요.", "⚠️ AI 정제 실패");
   }
-  Logger.log("[최종 통과] " + deals.length + "건 (동일 딜 중복 " + pairDropped + "건 제거)");
-
-  var stats = { fetched: items.length, candidates: candidates.length, loaded: deals.length,
-                pairDropped: pairDropped, geminiFailed: gateFailed };
+  Logger.log("[최종 통과] " + stats.loaded + "건 (동일 딜 중복 " + stats.pairDropped + "건 제거)");
 
   if (isDryRun) {
     Logger.log("═══ DRY RUN — 시트 미기록 ═══");
-    for (var z = 0; z < deals.length; z++) {
-      Logger.log((z + 1) + ". [" + deals[z].type + "] " + deals[z].acquirer + " → " + deals[z].target + " │ " + deals[z].titleEn);
+    for (var z = 0; z < dryDeals.length; z++) {
+      Logger.log((z + 1) + ". [" + dryDeals[z].type + "] " + dryDeals[z].acquirer + " → " + dryDeals[z].target + " │ " + dryDeals[z].titleEn);
     }
     return stats;
   }
 
-  // ── 5. 적재 ──
-  if (deals.length === 0) {
-    toast_("신규 딜이 없습니다. (수집 " + items.length + "건 → AI 심사 " + candidates.length + "건)", "✔️ Verified");
-    return stats;
-  }
+  pruneSheet_(ss, REVIEW_SHEET, REVIEW_KEEP_ROWS);
 
-  sheet.insertRowsBefore(2, deals.length);
+  // 어떤 경로로든 들어온 중복(인수사·대상사 쌍 동일)은 매 실행 끝에 자동 정리한다
+  try { stats.cleaned = cleanupDuplicates(true) || 0; } catch (ce) { Logger.log("[CLEANUP FAIL] " + ce); }
+  try { ensureTriggers_(); } catch (te) { Logger.log("[TRIGGER FAIL] " + te); }
+
+  if (written === 0) {
+    toast_("신규 딜이 없습니다. (수집 " + items.length + "건 → AI 심사 " + stats.reviewed + "건)", "✔️ Verified");
+  } else {
+    toast_(written + "건의 신규 딜을 추가했습니다.", "🎉 Execution Completed");
+  }
+  return stats;
+}
+
+/** 딜 목록을 딜DB의 atRow 위치에 삽입. 넣은 행 수를 돌려준다. */
+function appendDeals_(sheet, deals, atRow) {
   var rows = deals.map(function (d) {
     return [
       Utilities.formatDate(new Date(), "Asia/Seoul", "yyyy-MM-dd HH:mm"),
@@ -587,17 +729,125 @@ function runPipeline_(isDryRun) {
       d.link, d.source
     ];
   });
-  sheet.getRange(2, 1, rows.length, DEAL_COLS).setValues(rows);
-
-  toast_(deals.length + "건의 신규 딜을 추가했습니다.", "🎉 Execution Completed");
-  return stats;
+  sheet.insertRowsBefore(atRow, rows.length);
+  sheet.getRange(atRow, 1, rows.length, DEAL_COLS).setValues(rows);
+  return rows.length;
 }
 
 
 // ============================================================
+// 심사이력 / 실행로그 시트
+// ============================================================
+function reviewSheet_(ss, create) {
+  var sh = ss.getSheetByName(REVIEW_SHEET);
+  if (!sh && create) {
+    sh = ss.insertSheet(REVIEW_SHEET);
+    sh.appendRow(["판정일시", "링크", "판정", "제목", "출처"]);
+    sh.getRange(1, 1, 1, 5).setFontWeight("bold").setBackground("#455a64").setFontColor("#ffffff");
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+/** 심사이력의 링크 → true 맵 */
+function loadReviewedLinks_(ss) {
+  var map = {};
+  var sh = reviewSheet_(ss, false);
+  if (!sh || sh.getLastRow() <= 1) return map;
+  var n = sh.getLastRow() - 1;
+  var links = sh.getRange(2, 2, n, 1).getValues();
+  for (var i = 0; i < links.length; i++) {
+    var l = String(links[i][0] || "").trim();
+    if (l) map[l] = true;
+  }
+  return map;
+}
+
+function appendReviewRows_(ss, rows) {
+  var sh = reviewSheet_(ss, true);
+  sh.getRange(sh.getLastRow() + 1, 1, rows.length, 5).setValues(rows);
+}
+
+/** 아래로 이어 붙이는 시트에서 위쪽(오래된) 행을 잘라 keep 행만 남긴다 */
+function pruneSheet_(ss, name, keep) {
+  var sh = ss.getSheetByName(name);
+  if (!sh) return;
+  var n = sh.getLastRow() - 1;
+  if (n > keep) sh.deleteRows(2, n - keep);
+}
+
+function runLogSheet_(ss) {
+  var sh = ss.getSheetByName(RUNLOG_SHEET);
+  if (!sh) {
+    sh = ss.insertSheet(RUNLOG_SHEET);
+    sh.appendRow(RUNLOG_HEADER);
+    sh.getRange(1, 1, 1, RUNLOG_HEADER.length).setFontWeight("bold").setBackground("#455a64").setFontColor("#ffffff");
+    sh.setFrozenRows(1);
+  } else if (sh.getLastColumn() < RUNLOG_HEADER.length) {
+    // 이전 버전에서 만든 시트 — 늘어난 열 헤더만 채운다
+    var from = sh.getLastColumn() + 1;
+    sh.getRange(1, from, 1, RUNLOG_HEADER.length - from + 1)
+      .setValues([RUNLOG_HEADER.slice(from - 1)])
+      .setFontWeight("bold").setBackground("#455a64").setFontColor("#ffffff");
+  }
+  return sh;
+}
+var RUNLOG_HEADER = ["실행시각", "모드", "소요(초)", "수집", "후보", "이미심사 제외", "심사", "적재", "동일딜 제거",
+                     "Gemini 실패", "타임아웃", "오류", "Gemini 마지막 오류", "중복정리"];
+
+/** 실행로그의 마지막 실제 수집(dry-run 제외) 1건. 없으면 null. */
+function lastRunLog_() {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RUNLOG_SHEET);
+  if (!sh || sh.getLastRow() <= 1) return null;
+  var total = sh.getLastRow() - 1;
+  var take  = Math.min(total, 20);
+  var vals  = sh.getRange(2 + total - take, 1, take, RUNLOG_HEADER.length).getValues();
+  for (var i = vals.length - 1; i >= 0; i--) {
+    var r = vals[i];
+    if (String(r[1] || "").indexOf("dry") === 0) continue;
+    var at = (r[0] instanceof Date) ? r[0] : new Date(String(r[0]).replace(" ", "T"));
+    if (isNaN(at.getTime())) continue;
+    return { at: at, mode: String(r[1] || ""), error: String(r[11] || ""),
+             geminiFailed: String(r[9] || "") === "Y", timedOut: String(r[10] || "") === "Y" };
+  }
+  return null;
+}
+
+function writeRunLog_(mode, startedAt, stats, error) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = runLogSheet_(ss);
+  sh.appendRow([
+    Utilities.formatDate(new Date(startedAt), "Asia/Seoul", "yyyy-MM-dd HH:mm:ss"),
+    mode,
+    Math.round((new Date().getTime() - startedAt) / 1000),
+    stats.fetched || 0, stats.candidates || 0, stats.skippedReviewed || 0, stats.reviewed || 0,
+    stats.loaded || 0, stats.pairDropped || 0,
+    stats.geminiFailed ? "Y" : "", stats.timedOut ? "Y" : "",
+    String(error || "").substring(0, 500),
+    String(LAST_GEMINI_ERROR || "").substring(0, 300),
+    stats.cleaned || 0
+  ]);
+  pruneSheet_(ss, RUNLOG_SHEET, RUNLOG_KEEP_ROWS);
+}
+
+/** ?run=status 용: 최근 n회 실행 요약 */
+function recentRunLogs_(ss, n) {
+  var sh = ss.getSheetByName(RUNLOG_SHEET);
+  if (!sh || sh.getLastRow() <= 1) return [];
+  var total = sh.getLastRow() - 1;
+  var take  = Math.min(n, total);
+  var vals  = sh.getRange(2 + total - take, 1, take, RUNLOG_HEADER.length).getDisplayValues();
+  return vals.reverse().map(function (r) {
+    return { at: r[0], mode: r[1], sec: r[2], fetched: r[3], candidates: r[4], skippedReviewed: r[5],
+             reviewed: r[6], loaded: r[7], pairDropped: r[8], geminiFailed: r[9], timedOut: r[10],
+             error: r[11], geminiError: r[12], cleaned: r[13] };
+  });
+}
+
+// ============================================================
 // Gemini 판정 + 추출 (핵심)
 // ============================================================
-function extractBatchWithGemini_(chunk) {
+function extractBatchWithGemini_(chunk, deadline) {
   var key = PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY");
   if (!key) {
     LAST_GEMINI_ERROR = "API 키 없음";
@@ -646,25 +896,14 @@ function extractBatchWithGemini_(chunk) {
     "No other text.\n\n" +
     "Items:\n" + numbered;
 
-  var url = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent?key=" + encodeURIComponent(key);
   var payload = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: { temperature: 0, responseMimeType: "application/json" }
   };
 
   try {
-    var res = UrlFetchApp.fetch(url, {
-      method: "post",
-      contentType: "application/json",
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    });
-
-    if (res.getResponseCode() !== 200) {
-      LAST_GEMINI_ERROR = "HTTP " + res.getResponseCode() + " │ " + res.getContentText().substring(0, 300);
-      Logger.log("[GEMINI] " + LAST_GEMINI_ERROR);
-      return null;
-    }
+    var res = geminiFetchWithFallback_(key, payload, deadline);
+    if (!res) return null;   // LAST_GEMINI_ERROR 는 내부에서 세팅됨
 
     var body = JSON.parse(res.getContentText());
     var text = body.candidates[0].content.parts[0].text;
@@ -692,6 +931,48 @@ function extractBatchWithGemini_(chunk) {
     Logger.log("[GEMINI FAIL] " + e);
     return null;
   }
+}
+
+/**
+ * GEMINI_MODELS 순서대로 호출. 503(과부하)/429(쿼터)는 같은 모델에서 백오프 재시도 후 다음 모델로 넘어간다.
+ * 그 외 4xx(잘못된 모델명·권한 등)도 다음 모델을 시도한다. 성공하면 HTTPResponse, 전부 실패하면 null.
+ * deadline(ms epoch)을 넘기면 남은 재시도·폴백을 포기한다 — 모델 4개 × 3회 재시도가 전부 실패하면
+ * 한 청크에 수 분이 걸려 6분 하드리밋에 걸리던 문제 방지.
+ */
+function geminiFetchWithFallback_(key, payload, deadline) {
+  var lastErr = "";
+  var first = true;
+  for (var m = 0; m < GEMINI_MODELS.length; m++) {
+    var model = GEMINI_MODELS[m];
+    var url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + encodeURIComponent(key);
+    for (var attempt = 0; attempt <= GEMINI_RETRY_WAITS_MS.length; attempt++) {
+      if (!first && deadline && new Date().getTime() > deadline) {
+        lastErr += " │ 청크 시간 예산 초과로 중단";
+        Logger.log("[GEMINI] 청크 시간 예산 초과 — 재시도/폴백 중단");
+        LAST_GEMINI_ERROR = lastErr;
+        return null;
+      }
+      first = false;
+      var res = UrlFetchApp.fetch(url, {
+        method: "post",
+        contentType: "application/json",
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true
+      });
+      var code = res.getResponseCode();
+      if (code === 200) {
+        if (m > 0 || attempt > 0) Logger.log("[GEMINI] " + model + " 성공 (폴백 " + m + " / 재시도 " + attempt + ")");
+        return res;
+      }
+      lastErr = "HTTP " + code + " (" + model + ") │ " + res.getContentText().substring(0, 300);
+      Logger.log("[GEMINI] " + lastErr);
+      var transient = (code === 503 || code === 429 || code === 500);
+      if (!transient) break;                                   // 모델 자체 문제 → 다음 모델
+      if (attempt < GEMINI_RETRY_WAITS_MS.length) Utilities.sleep(GEMINI_RETRY_WAITS_MS[attempt]);
+    }
+  }
+  LAST_GEMINI_ERROR = lastErr;
+  return null;
 }
 
 
