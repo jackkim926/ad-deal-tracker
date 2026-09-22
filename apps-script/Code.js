@@ -1,5 +1,5 @@
 // ============================================================
-// Global AdTech & Agency Deal Tracker  v11.12
+// Global AdTech & Agency Deal Tracker  v11.13
 // M&A · 지분투자 · 파트너십 수집 → Gemini 정제 → 웹 대시보드
 // ============================================================
 //
@@ -62,6 +62,12 @@ var LOCK_WAIT_MS     = 10 * 1000;        // 트리거와 수동 실행이 겹칠
 var WATCHDOG_EVERY_HOURS = 3;   // 감시 트리거 주기
 var STALE_RUN_HOURS      = 22;  // 마지막 실행이 이보다 오래됐으면(트리거 소실·실패 등) 감시 트리거가 대신 수집
 var RETRY_AFTER_HOURS    = 1;   // 마지막 실행이 오류/Gemini 실패/타임아웃이면 이만큼 지난 뒤 재수집
+
+// v11.13 — 오래된 기사 재색인 대응
+// Google News가 수년 전 기사를 새 pubDate로 다시 내보내는 일이 있다 (예: Campaign 2011년 기사가 2026-09-16자로 재등장).
+// RSS에는 원문 발행일이 없고 Gemini는 제목만 보므로 자동으로는 완전히 못 막는다.
+// → ?run=reject 로 사람이 걷어내면 링크와 제목을 심사이력에 남겨 같은 기사가 다시 들어오지 않게 한다.
+var REJECT_VERDICT = "수동제외";
 
 // 원격 관리(?run=...) 호출용 비밀 토큰.
 // 소스를 공개 저장소에 올리므로 코드에 두지 않고 스크립트 속성에서 읽는다.
@@ -447,6 +453,12 @@ function doGet(e) {
         out.applied = (e.parameter.apply === "1");
         out.duplicates = cleanupDuplicates(out.applied);
         out.ok = true;
+      } else if (e.parameter.run === "reject") {
+        // ?run=reject&link=<링크>  또는  &title=<제목 일부(대소문자 무시)>  → 대상만 계산 (시트 변경 없음)
+        // &apply=1                                                         → 딜DB에서 삭제 + 심사이력에 수동제외 기록
+        out.applied = (e.parameter.apply === "1");
+        out.result = rejectDeals(e.parameter.link || "", e.parameter.title || "", out.applied);
+        out.ok = true;
       } else if (e.parameter.run === "models") {
         var mkey = props.getProperty("GEMINI_API_KEY");
         var mres = UrlFetchApp.fetch(
@@ -562,6 +574,8 @@ function runPipelineLocked_(isDryRun, startedAt, stats) {
   }
   // 이미 Gemini가 판정한 기사(무관/동일딜)는 다시 묻지 않는다
   var reviewedLinks = loadReviewedLinks_(ss);
+  // 사람이 수동제외한 기사는 링크가 바뀌어 다시 와도(재색인) 제목으로 막는다
+  var rejectedTitles = loadRejectedTitles_(ss);
 
   // ── 2. 수집 ──
   var items = fetchAllFeeds_(startedAt);
@@ -590,6 +604,7 @@ function runPipelineLocked_(isDryRun, startedAt, stats) {
     if (item.link && seenLinks[item.link]) continue;
     if (item.link && historyLinks[item.link]) continue;
     if (item.link && reviewedLinks[item.link]) { stats.skippedReviewed++; continue; }
+    if (rejectedTitles[titleLower]) { stats.skippedReviewed++; continue; }
 
     var fp = dealFingerprint_(item.headline);
     var isDup = false;
@@ -763,6 +778,56 @@ function loadReviewedLinks_(ss) {
   return map;
 }
 
+/** 심사이력에서 판정이 수동제외인 행의 제목(소문자) → true 맵 */
+function loadRejectedTitles_(ss) {
+  var map = {};
+  var sh = reviewSheet_(ss, false);
+  if (!sh || sh.getLastRow() <= 1) return map;
+  var n = sh.getLastRow() - 1;
+  var vals = sh.getRange(2, 3, n, 2).getValues();   // C: 판정, D: 제목
+  for (var i = 0; i < vals.length; i++) {
+    if (String(vals[i][0]) !== REJECT_VERDICT) continue;
+    var t = String(vals[i][1] || "").trim().toLowerCase();
+    if (t) map[t] = true;
+  }
+  return map;
+}
+
+/**
+ * 잘못 들어온 딜을 사람이 걷어낸다. link(정확히 일치) 또는 titleQuery(제목(EN)에 포함, 대소문자 무시)로 찾는다.
+ * apply=false 면 대상만 돌려주고, true 면 딜DB에서 삭제하고 심사이력에 수동제외로 남긴다
+ * (같은 링크는 물론, Google News가 새 링크로 재색인해도 제목으로 재수집을 막는다).
+ */
+function rejectDeals(link, titleQuery, apply) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_NAME);
+  var res = { matched: [], deleted: 0 };
+  if (!sheet || sheet.getLastRow() <= 1) return res;
+  link = String(link || "").trim();
+  var q = String(titleQuery || "").trim().toLowerCase();
+  if (!link && !q) { res.error = "link 또는 title 필요"; return res; }
+
+  var n = sheet.getLastRow() - 1;
+  var vals = sheet.getRange(2, 1, n, DEAL_COLS).getValues();
+  var hits = [];
+  for (var i = 0; i < vals.length; i++) {
+    var rowLink  = String(vals[i][11] || "").trim();
+    var rowTitle = String(vals[i][3]  || "").trim();
+    var hit = (link && rowLink === link) || (q && rowTitle.toLowerCase().indexOf(q) !== -1);
+    if (!hit) continue;
+    hits.push(i + 2);
+    res.matched.push({ row: i + 2, date: String(vals[i][1]), title: rowTitle, link: rowLink, source: String(vals[i][12] || "") });
+  }
+  if (!apply || hits.length === 0) return res;
+
+  var stamp = Utilities.formatDate(new Date(), "Asia/Seoul", "yyyy-MM-dd HH:mm");
+  appendReviewRows_(ss, res.matched.map(function (m) { return [stamp, m.link, REJECT_VERDICT, m.title, m.source]; }));
+  for (var d = hits.length - 1; d >= 0; d--) sheet.deleteRow(hits[d]);   // 아래부터 지워야 행 번호가 안 밀린다
+  res.deleted = hits.length;
+  Logger.log("[REJECT] " + hits.length + "건 삭제 · 수동제외 기록");
+  return res;
+}
+
 function appendReviewRows_(ss, rows) {
   var sh = reviewSheet_(ss, true);
   sh.getRange(sh.getLastRow() + 1, 1, rows.length, 5).setValues(rows);
@@ -858,12 +923,13 @@ function extractBatchWithGemini_(chunk, deadline) {
   var numbered = chunk.map(function (x, i) {
     var line = (i + 1) + ". " + x.headline;
     if (x.desc) line += " — " + x.desc;
+    if (x.feed) line += " [" + x.feed + "]";
     return line;
   }).join("\n");
 
   var prompt =
     "You are a deal-intelligence extractor for the GLOBAL ADVERTISING/MARKETING INDUSTRY.\n" +
-    "For each numbered news item (headline, optionally followed by a snippet after '—'), decide whether it " +
+    "For each numbered news item (headline, optionally followed by a snippet after '—' and the feed source in [brackets]), decide whether it " +
     "REPORTS a specific corporate deal where at least one named party operates in advertising, marketing, " +
     "adtech, martech, media, or PR. Deal types:\n" +
     '- "M&A": acquisition, merger, takeover, buyout (announced, agreed, or completed)\n' +
@@ -878,8 +944,10 @@ function extractBatchWithGemini_(chunk, deadline) {
     "homepage/social account), pop-ups, store openings, installations; stories where a past deal is only " +
     "background (e.g. growth or an executive's career after an acquisition).\n" +
     "Today is " + Utilities.formatDate(new Date(), "Asia/Seoul", "MMMM yyyy") + ". " +
-    "Also relevant=false if you recognize the deal as announced or completed before 2025 (old stories are " +
-    "sometimes re-indexed with fresh dates).\n\n" +
+    "Also relevant=false if you recognize the deal as announced or completed before 2025 — Google News sometimes " +
+    "re-indexes years-old articles with fresh dates (e.g. Publicis Groupe's 2011 purchase of a French healthcare " +
+    "consultancy resurfaced in 2026). When a headline names no specific target and matches a deal you know is old, " +
+    "treat it as old.\n\n" +
     "For each relevant item extract:\n" +
     '- "type": "M&A" | "지분투자" | "파트너십"\n' +
     '- "acquirer": acquiring/investing company, or partner 1 (English name)\n' +
